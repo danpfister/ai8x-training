@@ -16,30 +16,31 @@ class AI85LanguageNet(nn.Module):
             self,
             num_classes=3,
             num_channels=3,
-            dimensions=(64, 79),  # pylint: disable=unused-argument
+            dimensions=(64, 108),  # pylint: disable=unused-argument
             bias=False,
             **kwargs
     ):
         super().__init__()
 
-        self.conv1 = ai8x.FusedMaxPoolConv2dReLU(num_channels, 16, 3, pool_size=2, pool_stride=2, stride=1,
+        self.conv1 = ai8x.FusedConv2dReLU(num_channels, 16, 3, stride=1, padding=1, bias=bias, **kwargs)
+        self.conv4 = ai8x.FusedMaxPoolConv2dReLU(16, 32, 3, pool_size=2, pool_stride=2, stride=1,
                                                  padding=1, bias=bias, **kwargs)
-        self.conv2 = ai8x.FusedMaxPoolConv2dReLU(16, 32, 3, pool_size=2, pool_stride=2, stride=1,
+        self.conv5 = ai8x.FusedMaxPoolConv2dReLU(32, 32, 3, pool_size=2, pool_stride=2, stride=1,
                                                  padding=1, bias=bias, **kwargs)
-        self.conv3 = ai8x.FusedMaxPoolConv2dReLU(32, 16, 3, pool_size=2, pool_stride=2, stride=1,
+        self.conv6 = ai8x.FusedMaxPoolConv2dReLU(32, 8, 3, pool_size=2, pool_stride=2, stride=1,
                                                  padding=1, bias=bias, **kwargs)
-        self.conv4 = ai8x.FusedConv2dReLU(16, 8, 3, stride=1, padding=1, bias=bias,
-                                          **kwargs)
-        self.linear = ai8x.Linear(8*8*13, num_classes)
+        self.linear1 = ai8x.FusedLinearReLU(8*8*13, 128)
+        self.linear2 = ai8x.Linear(128, num_classes)
 
     def forward(self, x):  # pylint: disable=arguments-differ
         """Forward prop"""
-        x = self.conv1(x)
-        x = self.conv2(x)
-        x = self.conv3(x)
-        x = self.conv4(x)
+        x = self.conv1(x) # 16x64x108
+        x = self.conv4(x) # 64x32x54
+        x = self.conv5(x) # 32x16x27
+        x = self.conv6(x) # 8x8x13
         x = x.view(x.size(0), -1)
-        x = self.linear(x)
+        x = self.linear1(x) # 128
+        x = self.linear2(x) # 3
         return x
 
 

@@ -49,7 +49,7 @@ class LanguageDetection(torch.utils.data.Dataset):
             downloaded again.
     """
 
-    fs = 16000
+    fs = 22050
     training_file = 'train.pt'
     test_file = 'test.pt'
     validation_file = 'val.pt'
@@ -62,6 +62,7 @@ class LanguageDetection(torch.utils.data.Dataset):
         self.d_type = d_type
         self.transform = transform
         self.n_augment = n_augment
+        self.debug = False # if True, dataset is processed everytime at launch
 
         if download: self.__download()
 
@@ -76,7 +77,6 @@ class LanguageDetection(torch.utils.data.Dataset):
             return
 
         self.data, self.targets = torch.load(os.path.join(self.processed_folder, data_file))
-        #self.__filter_classes()
 
     @property
     def raw_folder(self):
@@ -107,24 +107,28 @@ class LanguageDetection(torch.utils.data.Dataset):
                 print(f'\tProcessing the label: {label}. {i+1} of {len(labels)}')
                 records = os.listdir(os.path.join(self.raw_folder, label))
                 records = sorted(records)
-                for record in records:
+                for j, record in enumerate(records):
+                    print(f"\t\tProcessing audio file: {record}, {j+1} of {len(records)}")
                     record_pth = os.path.join(self.raw_folder, label, record)
                     y, _ = librosa.load(record_pth, offset=0, sr=22050)
-
-                    mfcc = compute_mfcc(audio=y, sr=22050)
                     
-                    if mfcc is not None:
-                        if hash(record) % 10 < 7:
-                            train_images.append(mfcc)
-                            train_labels.append(label)
-                        elif hash(record) % 10 < 9:
-                            val_images.append(mfcc)
-                            val_labels.append(label)
-                        else:
-                            test_images.append(mfcc)
-                            test_labels.append(label)
+                    augmented_audios = augment_multiple(audio=y, fs=self.fs, n_augment=self.n_augment)
 
-            print(f"number of train images elements: {len(train_images)} and each has shape: {train_images[0].shape}")
+                    for augmented_audio in augmented_audios:
+                        mfcc = compute_mfcc(audio=augmented_audio, sr=self.fs)
+                        
+                        if mfcc is not None:
+                            if hash(record) % 10 < 7:
+                                train_images.append(mfcc)
+                                train_labels.append(label)
+                            elif hash(record) % 10 < 9:
+                                val_images.append(mfcc)
+                                val_labels.append(label)
+                            else:
+                                test_images.append(mfcc)
+                                test_labels.append(label)
+
+            if self.debug: print(f"number of train images elements: {len(train_images)} and each has shape: {train_images[0].shape}")
 
             train_images = torch.from_numpy(np.array(train_images))
             val_images = torch.from_numpy(np.array(val_images))
@@ -146,10 +150,9 @@ class LanguageDetection(torch.utils.data.Dataset):
         print('Dataset created!')
 
     def __download(self):
-        '''
-        if self.__check_exists():
+        if self.__check_exists() and not self.debug:
+            print("processed files already exist")
             return
-        '''
 
         self.__makedir_exist_ok(self.raw_folder)
         self.__makedir_exist_ok(self.processed_folder)
@@ -305,13 +308,13 @@ def languagedetect_get_datasets(data, load_train=True, load_test=True, num_class
     ])
 
     if load_train:
-        train_dataset = LanguageDetection(root=data_dir, classes=classes, d_type='train', n_augment=0,
+        train_dataset = LanguageDetection(root=data_dir, classes=classes, d_type='train', n_augment=3,
                                   transform=transform, download=True)
     else:
         train_dataset = None
 
     if load_test:
-        test_dataset = LanguageDetection(root=data_dir, classes=classes, d_type='val', n_augment=0,
+        test_dataset = LanguageDetection(root=data_dir, classes=classes, d_type='val', n_augment=3,
                                  transform=transform, download=True)
 
         if args.truncate_testset:
