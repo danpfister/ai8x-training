@@ -54,7 +54,7 @@ class LanguageDetection(torch.utils.data.Dataset):
     test_file = 'test.pt'
     validation_file = 'val.pt'
 
-    class_dict = {'en': 0, 'de': 1, 'es': 2}
+    class_dict = {'de': 0, 'en': 1, 'es': 2}
 
     def __init__(self, root, classes, d_type, n_augment=0, transform=None, download=False):
         self.root = root
@@ -82,6 +82,8 @@ class LanguageDetection(torch.utils.data.Dataset):
     def raw_folder(self):
         """Folder for the raw data.
         """
+        if self.debug:
+            return os.path.join(self.root, self.__class__.__name__, 'test')
         return os.path.join(self.root, self.__class__.__name__, 'raw')
 
     @property
@@ -94,39 +96,39 @@ class LanguageDetection(torch.utils.data.Dataset):
         print('Generating dataset from raw data samples.')
         with warnings.catch_warnings():
             warnings.simplefilter('error')
-            lst = os.listdir(self.raw_folder)
-            labels = [d for d in lst if os.path.isdir(os.path.join(self.raw_folder, d)) and
-                      d[0].isalpha()]
+            languages = os.listdir(self.raw_folder)
+            languages = sorted(languages)
             train_images = []
             val_images = []
             test_images = []
             train_labels = []
             val_labels = []
             test_labels = []
-            for i, label in enumerate(labels):
-                print(f'\tProcessing the label: {label}. {i+1} of {len(labels)}')
-                records = os.listdir(os.path.join(self.raw_folder, label))
-                records = sorted(records)
-                for j, record in enumerate(records):
-                    print(f"\t\tProcessing audio file: {record}, {j+1} of {len(records)}")
-                    record_pth = os.path.join(self.raw_folder, label, record)
-                    y, _ = librosa.load(record_pth, offset=0, sr=22050)
+            for i, language in enumerate(languages):
+                print(f'\tProcessing the label: {language}. {i+1} of {len(languages)}')
+                audio_names = os.listdir(os.path.join(self.raw_folder, language))
+                audio_names = sorted(audio_names)
+                for j, audio_name in enumerate(audio_names):
+                    print(f"\t\tProcessing audio file {j+1} of {len(audio_names)}")
+                    audio_file_path = os.path.join(self.raw_folder, language, audio_name)
+                    audio, _ = librosa.load(audio_file_path, offset=0, sr=self.fs)
                     
-                    augmented_audios = augment_multiple(audio=y, fs=self.fs, n_augment=self.n_augment)
+                    if self.n_augment != 0: augmented_audios = augment_multiple(audio=audio, fs=self.fs, n_augment=self.n_augment)
+                    else: augmented_audios = [audio]
 
                     for augmented_audio in augmented_audios:
                         mfcc = compute_mfcc(audio=augmented_audio, sr=self.fs)
                         
                         if mfcc is not None:
-                            if hash(record) % 10 < 7:
+                            if hash(audio_name) % 10 < 7:
                                 train_images.append(mfcc)
-                                train_labels.append(label)
-                            elif hash(record) % 10 < 9:
+                                train_labels.append(language)
+                            elif hash(audio_name) % 10 < 9:
                                 val_images.append(mfcc)
-                                val_labels.append(label)
+                                val_labels.append(language)
                             else:
                                 test_images.append(mfcc)
-                                test_labels.append(label)
+                                test_labels.append(language)
 
             if self.debug: print(f"number of train images elements: {len(train_images)} and each has shape: {train_images[0].shape}")
 
@@ -134,7 +136,9 @@ class LanguageDetection(torch.utils.data.Dataset):
             val_images = torch.from_numpy(np.array(val_images))
             test_images = torch.from_numpy(np.array(test_images))
 
-            label_dict = dict(zip(labels, range(len(self.class_dict))))
+            # change this if some classes are not used
+            label_dict = self.class_dict # dict(zip(languages, range(len(self.class_dict))))
+            if self.debug: print(f"mapping languages according to {label_dict}")
             train_labels = torch.from_numpy(np.array([label_dict[ll] for ll in train_labels]))
             val_labels = torch.from_numpy(np.array([label_dict[ll] for ll in val_labels]))
             test_labels = torch.from_numpy(np.array([label_dict[ll] for ll in test_labels]))
@@ -179,14 +183,13 @@ class LanguageDetection(torch.utils.data.Dataset):
     def __getitem__(self, index):
         img, target = self.data[index].numpy(), int(self.targets[index])
 
-        # doing this so that it is consistent with all other datasets
-        # to return a PIL Image
-        img = Image.fromarray(np.transpose(img, (2, 1, 0)))
-
-        #print(f"get item shape: {img.size}")
+        # stored as CxHxW but PIL expects HxWxC
+        img = Image.fromarray(np.transpose(img, (1, 2, 0)), mode='RGB')
 
         if self.transform is not None:
             img = self.transform(img)
+
+        if self.debug: print(f"got item of shape {img.shape} of label {target}")
 
         return img, target
 
@@ -195,7 +198,14 @@ class LanguageDetection(torch.utils.data.Dataset):
 
 
 def compute_mfcc(audio, sr):
-    """Converts audio to an image form by taking mel spectrogram.
+    """fixes audio length to 5 seconds and computes mfcc, delta and deltadelta of mfcc 
+
+    Args:
+        audio (_type_): audio
+        sr (_type_): sample rate
+
+    Returns:
+        np.ndarray: mfcc, delta and deltadelta stacked to shape (3x16x251)
     """
     duration = librosa.get_duration(y=audio, sr=sr)
     desired_duration = 5
@@ -206,13 +216,15 @@ def compute_mfcc(audio, sr):
     elif duration > desired_duration:
         audio = audio[:int(sr*desired_duration)]
 
-    mfcc = librosa.feature.mfcc(y=audio, n_mfcc=64, n_fft=2048, hop_length=1024, n_mels=64)
+    mfcc = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=16, hop_length=int(sr*0.02),
+                   n_fft=2048, win_length=2048, window='hann',
+                   center=True, pad_mode='constant')
     delta = librosa.feature.delta(mfcc, order=1)
     deltadelta = librosa.feature.delta(mfcc, order=2)
 
-    all = np.stack((mfcc, delta, deltadelta), axis=0).astype(np.uint8)
+    stacked = np.stack((mfcc, delta, deltadelta), axis=0)
 
-    return all
+    return stacked
 
 
 def load_audio_file(file_path):
@@ -308,13 +320,13 @@ def languagedetect_get_datasets(data, load_train=True, load_test=True, num_class
     ])
 
     if load_train:
-        train_dataset = LanguageDetection(root=data_dir, classes=classes, d_type='train', n_augment=3,
+        train_dataset = LanguageDetection(root=data_dir, classes=classes, d_type='train', n_augment=1,
                                   transform=transform, download=True)
     else:
         train_dataset = None
 
     if load_test:
-        test_dataset = LanguageDetection(root=data_dir, classes=classes, d_type='val', n_augment=3,
+        test_dataset = LanguageDetection(root=data_dir, classes=classes, d_type='val', n_augment=1,
                                  transform=transform, download=True)
 
         if args.truncate_testset:
@@ -331,7 +343,7 @@ def language_detection_get_datasets(data, load_train=True, load_test=True):
 datasets = [
     {
         'name': 'LanguageDetection',
-        'input': (3, 64, 108),
+        'input': (3, 16, 251),
         'output': (0, 1, 2),
         'weight': (1, 1, 1),
         'loader': language_detection_get_datasets,
