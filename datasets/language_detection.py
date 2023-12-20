@@ -17,6 +17,7 @@ import urllib
 import urllib.error
 import urllib.request
 import warnings
+import random
 
 import numpy as np
 import torch
@@ -71,6 +72,7 @@ class LanguageDetection(torch.utils.data.Dataset):
         elif self.d_type == 'test':
             data_file = self.test_file
         elif self.d_type == 'val':
+            raise Exception("val accessed")
             data_file = self.validation_file
         else:
             print(f'Unknown data type: {d_type}')
@@ -82,8 +84,6 @@ class LanguageDetection(torch.utils.data.Dataset):
     def raw_folder(self):
         """Folder for the raw data.
         """
-        if self.debug:
-            return os.path.join(self.root, self.__class__.__name__, 'test')
         return os.path.join(self.root, self.__class__.__name__, 'raw')
 
     @property
@@ -107,7 +107,7 @@ class LanguageDetection(torch.utils.data.Dataset):
             for i, language in enumerate(languages):
                 print(f'\tProcessing the label: {language}. {i+1} of {len(languages)}')
                 audio_names = os.listdir(os.path.join(self.raw_folder, language))
-                audio_names = sorted(audio_names)
+                audio_names = random.sample(audio_names, 1000)
                 for j, audio_name in enumerate(audio_names):
                     print(f"\t\tProcessing audio file {j+1} of {len(audio_names)}")
                     audio_file_path = os.path.join(self.raw_folder, language, audio_name)
@@ -119,18 +119,36 @@ class LanguageDetection(torch.utils.data.Dataset):
                     for augmented_audio in augmented_audios:
                         mfcc = compute_mfcc(audio=augmented_audio, sr=self.fs)
                         
-                        if mfcc is not None:
-                            if hash(audio_name) % 10 < 7:
-                                train_images.append(mfcc)
-                                train_labels.append(language)
-                            elif hash(audio_name) % 10 < 9:
-                                val_images.append(mfcc)
-                                val_labels.append(language)
-                            else:
-                                test_images.append(mfcc)
-                                test_labels.append(language)
+                        if hash(audio_name) % 10 < 8:
+                            train_images.append(mfcc)
+                            train_labels.append(language)
+                        else:
+                            test_images.append(mfcc)
+                            test_labels.append(language)
+                        '''
+                        elif hash(audio_name) % 10 < 9:
+                            val_images.append(mfcc)
+                            val_labels.append(language)
+                        '''
 
-            if self.debug: print(f"number of train images elements: {len(train_images)} and each has shape: {train_images[0].shape}")
+            assert len(train_images) == len(train_labels)
+            assert len(val_images) == len(val_labels)
+            assert len(test_images) == len(test_labels)
+            
+            if self.debug: print(f"data has shape {train_images[0].shape}")
+            if self.debug:
+                print(f"train has {len(train_images)} samples")
+                print(f"\tof which {train_labels.count('de')} are de")
+                print(f"\tof which {train_labels.count('en')} are en")
+                print(f"\tof which {train_labels.count('es')} are es")
+                print(f"val has {len(val_images)} samples")
+                print(f"\tof which {val_labels.count('de')} are de")
+                print(f"\tof which {val_labels.count('en')} are en")
+                print(f"\tof which {val_labels.count('es')} are es")
+                print(f"test has {len(test_images)} samples")
+                print(f"\tof which {test_labels.count('de')} are de")
+                print(f"\tof which {test_labels.count('en')} are en")
+                print(f"\tof which {test_labels.count('es')} are es")
 
             train_images = torch.from_numpy(np.array(train_images))
             val_images = torch.from_numpy(np.array(val_images))
@@ -183,13 +201,16 @@ class LanguageDetection(torch.utils.data.Dataset):
     def __getitem__(self, index):
         img, target = self.data[index].numpy(), int(self.targets[index])
 
+        img = 255 * (img - img.min()) / (img.max() - img.min())
+
+        # img = np.random.rand(3, 16, 251)
         # stored as CxHxW but PIL expects HxWxC
         img = Image.fromarray(np.transpose(img, (1, 2, 0)), mode='RGB')
 
         if self.transform is not None:
             img = self.transform(img)
 
-        if self.debug: print(f"got item of shape {img.shape} of label {target}")
+        # if self.debug: print(f"got item of shape {img.shape} of label {target}")
 
         return img, target
 
@@ -208,7 +229,7 @@ def compute_mfcc(audio, sr):
         np.ndarray: mfcc, delta and deltadelta stacked to shape (3x16x251)
     """
     duration = librosa.get_duration(y=audio, sr=sr)
-    desired_duration = 5
+    desired_duration = 10
     if duration < desired_duration:
         num_repeats = int(np.ceil(desired_duration / duration))
         repeated_audio = np.tile(audio, num_repeats)
@@ -320,13 +341,13 @@ def languagedetect_get_datasets(data, load_train=True, load_test=True, num_class
     ])
 
     if load_train:
-        train_dataset = LanguageDetection(root=data_dir, classes=classes, d_type='train', n_augment=1,
+        train_dataset = LanguageDetection(root=data_dir, classes=classes, d_type='train', n_augment=0,
                                   transform=transform, download=True)
     else:
         train_dataset = None
 
     if load_test:
-        test_dataset = LanguageDetection(root=data_dir, classes=classes, d_type='val', n_augment=1,
+        test_dataset = LanguageDetection(root=data_dir, classes=classes, d_type='test', n_augment=0,
                                  transform=transform, download=True)
 
         if args.truncate_testset:
