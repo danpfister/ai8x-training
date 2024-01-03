@@ -60,16 +60,15 @@ class KWS:
     """
 
     url_speechcommand = 'http://download.tensorflow.org/data/speech_commands_v0.02.tar.gz'
-    url_librispeech = 'http://us.openslr.org/resources/12/dev-clean.tar.gz'
     fs = 16000
 
     class_dict = {'backward': 0, 'bed': 1, 'bird': 2, 'cat': 3, 'dog': 4, 'down': 5,
                   'eight': 6, 'five': 7, 'follow': 8, 'forward': 9, 'four': 10, 'go': 11,
-                  'happy': 12, 'house': 13, 'learn': 14, 'left': 15, 'librispeech': 16,
-                  'marvin': 17, 'nine': 18, 'no': 19, 'off': 20, 'on': 21, 'one': 22,
-                  'right': 23, 'seven': 24, 'sheila': 25, 'six': 26, 'stop': 27,
-                  'three': 28, 'tree': 29, 'two': 30, 'up': 31, 'visual': 32, 'wow': 33,
-                  'yes': 34, 'zero': 35}
+                  'happy': 12, 'house': 13, 'learn': 14, 'left': 15,
+                  'marvin': 16, 'nine': 17, 'no': 18, 'off': 19, 'on': 20, 'one': 21,
+                  'right': 22, 'seven': 23, 'sheila': 24, 'six': 25, 'stop': 26,
+                  'three': 27, 'tree': 28, 'two': 29, 'up': 30, 'visual': 31, 'wow': 32,
+                  'yes': 33, 'zero': 34}
 
     def __init__(self, root, classes, d_type, t_type, transform=None, quantization_scheme=None,
                  augmentation=None, download=False, save_unquantized=False):
@@ -105,12 +104,6 @@ class KWS:
         """Folder for the raw data.
         """
         return os.path.join(self.root, self.__class__.__name__, 'raw')
-
-    @property
-    def librispeech_folder(self):
-        """Folder for the librispeech data.
-        """
-        return os.path.join(self.root, self.__class__.__name__, 'librispeech')
 
     @property
     def noise_folder(self):
@@ -174,16 +167,6 @@ class KWS:
         self.__download_and_extract_archive(self.url_speechcommand,
                                             download_root=self.raw_folder,
                                             filename=filename)
-
-        # download LibriSpeech
-        filename = self.url_librispeech.rpartition('/')[2]
-        self.__download_and_extract_archive(self.url_librispeech,
-                                            download_root=self.librispeech_folder,
-                                            filename=filename)
-
-        # convert the LibriSpeech audio files to 1-sec 16KHz .wav, stored under raw/librispeech
-        self.__resample_convert_wav(folder_in=self.librispeech_folder,
-                                    folder_out=os.path.join(self.raw_folder, 'librispeech'))
 
         self.__gen_datasets()
 
@@ -281,73 +264,6 @@ class KWS:
         archive = os.path.join(download_root, filename)
         print(f"Extracting {archive} to {extract_root}")
         self.__extract_archive(archive, extract_root, remove_finished)
-
-    def __resample_convert_wav(self, folder_in, folder_out, sr=16000, ext='.flac'):
-        # create output folder
-        self.__makedir_exist_ok(folder_out)
-
-        # find total number of files to convert
-        total_count = 0
-        for (dirpath, _, filenames) in os.walk(folder_in):
-            for filename in sorted(filenames):
-                if filename.endswith(ext):
-                    total_count += 1
-        print(f"Total number of speech files to convert to 1-sec .wav: {total_count}")
-        converted_count = 0
-        # segment each audio file to 1-sec frames and save
-        for (dirpath, _, filenames) in os.walk(folder_in):
-            for filename in sorted(filenames):
-
-                i = 0
-                if filename.endswith(ext):
-                    fname = os.path.join(dirpath, filename)
-                    data, _ = librosa.load(fname, sr=sr)
-
-                    # normalize data
-                    mx = np.amax(abs(data))
-                    data = data / mx
-
-                    chunk_start = 0
-                    frame_count = 0
-
-                    # The beginning of an utterance is detected when the average
-                    # of absolute values of 128-sample chunks is above a threshold.
-                    # Then, a segment is formed from 30*128 samples before the beginning
-                    # of the utterance to 98*128 samples after that.
-                    # This 1 second (16384 samples) audio segment is converted to .wav
-                    # and saved in librispeech folder together with other keywords to
-                    # be used as the unknown class.
-
-                    precursor_len = 30 * 128
-                    postcursor_len = 98 * 128
-                    utterance_threshold = 30
-
-                    while True:
-                        if chunk_start + postcursor_len > len(data):
-                            break
-
-                        chunk = data[chunk_start: chunk_start + 128]
-                        # scaled average over 128 samples
-                        avg = 1000 * np.average(abs(chunk))
-                        i += 128
-
-                        if avg > utterance_threshold and chunk_start >= precursor_len:
-                            print(f"\r Converting {converted_count + 1}/{total_count} "
-                                  f"to {frame_count + 1} segments", end=" ")
-                            frame = data[chunk_start - precursor_len:chunk_start + postcursor_len]
-
-                            outfile = os.path.join(folder_out, filename[:-5] + '_' +
-                                                   str(f"{frame_count}") + '.wav')
-                            sf.write(outfile, frame, sr)
-
-                            chunk_start += postcursor_len
-                            frame_count += 1
-                        else:
-                            chunk_start += 128
-                    converted_count += 1
-                else:
-                    pass
-        print(f'\rFile conversion completed: {converted_count} files ')
 
     def __filter_dtype(self):
         if self.d_type == 'train':
