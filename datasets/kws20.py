@@ -498,7 +498,7 @@ class KWS:
             q_data = np.clip(q_data, 0, max_val)
         return np.uint8(q_data)
 
-    def __gen_datasets(self, exp_len=16384, row_len=128, overlap_ratio=0):
+    def __gen_datasets(self, exp_len=8192, row_len=128, overlap_ratio=0):
         print('Generating dataset from raw data samples for the first time. ')
         print('This process will take significant time (~60 minutes)...')
         with warnings.catch_warnings():
