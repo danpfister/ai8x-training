@@ -25,6 +25,7 @@ import time
 import urllib
 import warnings
 from zipfile import ZipFile
+from random import sample
 
 import numpy as np
 import torch
@@ -60,15 +61,16 @@ class KWS:
     """
 
     url_speechcommand = 'http://download.tensorflow.org/data/speech_commands_v0.02.tar.gz'
+    url_librispeech = 'http://us.openslr.org/resources/12/dev-clean.tar.gz'
     fs = 16000
 
-    class_dict = {'backward': 0, 'bed': 1, 'bird': 2, 'cat': 3, 'dog': 4, 'down': 5,
-                  'eight': 6, 'five': 7, 'follow': 8, 'forward': 9, 'four': 10, 'go': 11,
-                  'happy': 12, 'house': 13, 'learn': 14, 'left': 15,
-                  'marvin': 16, 'nine': 17, 'no': 18, 'off': 19, 'on': 20, 'one': 21,
-                  'right': 22, 'seven': 23, 'sheila': 24, 'six': 25, 'stop': 26,
-                  'three': 27, 'tree': 28, 'two': 29, 'up': 30, 'visual': 31, 'wow': 32,
-                  'yes': 33, 'zero': 34}
+    class_dict = {'backward': 0, 'bed': 1, 'bird': 2, 'blue': 3, 'cat': 4, 'dog': 5, 'down': 6,
+                  'eight': 7, 'five': 8, 'follow': 9, 'forward': 10, 'four': 11, 'go': 12, 'green': 13,
+                  'happy': 14, 'house': 15, 'learn': 16, 'left': 17, 'librispeech': 18,
+                  'marvin': 19, 'nine': 20, 'no': 21, 'off': 22, 'on': 23, 'one': 24, 'red': 25,
+                  'right': 26, 'seven': 27, 'sheila': 28, 'six': 29, 'stop': 30,
+                  'three': 31, 'tree': 32, 'two': 33, 'up': 34, 'visual': 35, 'wow': 36,
+                  'yes': 37, 'zero': 38}
 
     def __init__(self, root, classes, d_type, t_type, transform=None, quantization_scheme=None,
                  augmentation=None, download=False, save_unquantized=False):
@@ -104,6 +106,12 @@ class KWS:
         """Folder for the raw data.
         """
         return os.path.join(self.root, self.__class__.__name__, 'raw')
+
+    @property
+    def librispeech_folder(self):
+        """Folder for the librispeech data.
+        """
+        return os.path.join(self.root, self.__class__.__name__, 'librispeech')
 
     @property
     def noise_folder(self):
@@ -163,10 +171,24 @@ class KWS:
         self.__makedir_exist_ok(self.processed_folder)
 
         # download Speech Command
+        '''
         filename = self.url_speechcommand.rpartition('/')[2]
         self.__download_and_extract_archive(self.url_speechcommand,
                                             download_root=self.raw_folder,
                                             filename=filename)
+        '''
+
+        # download LibriSpeech
+        '''
+        filename = self.url_librispeech.rpartition('/')[2]
+        self.__download_and_extract_archive(self.url_librispeech,
+                                            download_root=self.librispeech_folder,
+                                            filename=filename)
+        '''
+
+        # convert the LibriSpeech audio files to 1-sec 16KHz .wav, stored under raw/librispeech
+        self.__resample_convert_wav(folder_in=self.librispeech_folder,
+                                    folder_out=os.path.join(self.raw_folder, 'librispeech'))
 
         self.__gen_datasets()
 
@@ -264,6 +286,73 @@ class KWS:
         archive = os.path.join(download_root, filename)
         print(f"Extracting {archive} to {extract_root}")
         self.__extract_archive(archive, extract_root, remove_finished)
+
+    def __resample_convert_wav(self, folder_in, folder_out, sr=16000, ext='.flac'):
+        # create output folder
+        self.__makedir_exist_ok(folder_out)
+
+        # find total number of files to convert
+        total_count = 0
+        for (dirpath, _, filenames) in os.walk(folder_in):
+            for filename in sorted(filenames):
+                if filename.endswith(ext):
+                    total_count += 1
+        print(f"Total number of speech files to convert to 1-sec .wav: {total_count}")
+        converted_count = 0
+        # segment each audio file to 1-sec frames and save
+        for (dirpath, _, filenames) in os.walk(folder_in):
+            for filename in sorted(filenames):
+
+                i = 0
+                if filename.endswith(ext):
+                    fname = os.path.join(dirpath, filename)
+                    data, _ = librosa.load(fname, sr=sr)
+
+                    # normalize data
+                    mx = np.amax(abs(data))
+                    data = data / mx
+
+                    chunk_start = 0
+                    frame_count = 0
+
+                    # The beginning of an utterance is detected when the average
+                    # of absolute values of 128-sample chunks is above a threshold.
+                    # Then, a segment is formed from 30*128 samples before the beginning
+                    # of the utterance to 98*128 samples after that.
+                    # This 1 second (16384 samples) audio segment is converted to .wav
+                    # and saved in librispeech folder together with other keywords to
+                    # be used as the unknown class.
+
+                    precursor_len = 30 * 128
+                    postcursor_len = 98 * 128
+                    utterance_threshold = 30
+
+                    while True:
+                        if chunk_start + postcursor_len > len(data):
+                            break
+
+                        chunk = data[chunk_start: chunk_start + 128]
+                        # scaled average over 128 samples
+                        avg = 1000 * np.average(abs(chunk))
+                        i += 128
+
+                        if avg > utterance_threshold and chunk_start >= precursor_len:
+                            print(f"\r Converting {converted_count + 1}/{total_count} "
+                                  f"to {frame_count + 1} segments", end=" ")
+                            frame = data[chunk_start - precursor_len:chunk_start + postcursor_len]
+
+                            outfile = os.path.join(folder_out, filename[:-5] + '_' +
+                                                   str(f"{frame_count}") + '.wav')
+                            sf.write(outfile, frame, sr)
+
+                            chunk_start += postcursor_len
+                            frame_count += 1
+                        else:
+                            chunk_start += 128
+                    converted_count += 1
+                else:
+                    pass
+        print(f'\rFile conversion completed: {converted_count} files ')
 
     def __filter_dtype(self):
         if self.d_type == 'train':
@@ -414,7 +503,8 @@ class KWS:
             q_data = np.clip(q_data, 0, max_val)
         return np.uint8(q_data)
 
-    def __gen_datasets(self, exp_len=8192, row_len=128, overlap_ratio=0):
+
+    def __gen_datasets(self, exp_len=16384, row_len=128, overlap_ratio=0):
         print('Generating dataset from raw data samples for the first time. ')
         print('This process will take significant time (~60 minutes)...')
         with warnings.catch_warnings():
@@ -435,7 +525,7 @@ class KWS:
             for i, label in enumerate(labels):
                 record_list = os.listdir(os.path.join(self.raw_folder, label))
                 print(f'{label:8s}:  \t{len(record_list)}')
-            print('------------------------------------------')
+            print('------------------------------------------')\
 
             # read testing_list.txt & validation_list.txt into sets for fast access
             with open(os.path.join(self.raw_folder, 'testing_list.txt'), encoding="utf-8") as f:
@@ -449,7 +539,13 @@ class KWS:
 
             for i, label in enumerate(labels):
                 print(f'Processing the label: {label}. {i + 1} of {len(labels)}')
-                record_list = sorted(os.listdir(os.path.join(self.raw_folder, label)))
+
+                if label in ['red', 'green', 'blue', 'librispeech']: # no limit for added classes and librispeech
+                    record_list = sorted(os.listdir(os.path.join(self.raw_folder, label)))
+                elif label in ['on', 'off', 'go', 'stop']: # limit used preadded classes to 2500
+                    record_list = sample(sorted(os.listdir(os.path.join(self.raw_folder, label))), 3000)
+                else: # limit other classes to 100
+                    record_list = sample(sorted(os.listdir(os.path.join(self.raw_folder, label))), 100)
 
                 # dimension: row_length x number_of_rows
                 if not self.save_unquantized:
@@ -544,7 +640,7 @@ class KWS_20(KWS):
         return self.__class__.__name__
 
 
-def KWS_get_datasets(data, load_train=True, load_test=True, num_classes=6):
+def KWS_get_datasets(data, load_train=True, load_test=True, num_classes=5): # 6
     """
     Load the folded 1D version of SpeechCom dataset
 
@@ -568,7 +664,7 @@ def KWS_get_datasets(data, load_train=True, load_test=True, num_classes=6):
         ai8x.normalize(args=args)
     ])
 
-    if num_classes in (6, 20):
+    if num_classes in (5, 7, 20):
         classes = next((e for _, e in enumerate(datasets)
                         if len(e['output']) - 1 == num_classes))['output'][:-1]
     else:
@@ -620,6 +716,9 @@ def KWS_20_get_datasets(data, load_train=True, load_test=True):
     """
     return KWS_get_datasets(data, load_train, load_test, num_classes=20)
 
+def KWS_Project_get_datasets(data, load_train=True, load_test=True):
+    return KWS_get_datasets(data, load_train, load_test, num_classes=7)
+
 
 def KWS_get_unquantized_datasets(data, load_train=True, load_test=True, num_classes=6):
     """
@@ -629,7 +728,7 @@ def KWS_get_unquantized_datasets(data, load_train=True, load_test=True, num_clas
 
     transform = None
 
-    if num_classes in (6, 20):
+    if num_classes in (5, 7, 20):
         classes = next((e for _, e in enumerate(datasets)
                         if len(e['output']) - 1 == num_classes))['output'][:-1]
     elif num_classes == 35:
@@ -671,6 +770,13 @@ def KWS_35_get_unquantized_datasets(data, load_train=True, load_test=True):
 
 
 datasets = [
+    {
+        'name': 'KWS_Project',  # 7 keywords
+        'input': (128, 128),
+        'output': ('red', 'green', 'blue', 'on', 'off', 'go', 'stop', 'UNKNOWN'),
+        'weight': (3, 3, 3, 1, 1, 1, 1, 0.1),
+        'loader': KWS_Project_get_datasets,
+    },
     {
         'name': 'KWS',  # 6 keywords
         'input': (512, 64),
