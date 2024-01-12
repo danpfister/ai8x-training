@@ -19,3 +19,5 @@
 /super-linter.report
 /venv*/
 /typings/
+*.npy
+/project/
