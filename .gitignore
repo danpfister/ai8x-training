@@ -20,4 +20,5 @@
 /venv*/
 /typings/
 *.npy
-/project/
+/project/*
+!/project/kws_colours_final/
