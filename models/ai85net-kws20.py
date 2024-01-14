@@ -26,7 +26,7 @@ class AI85KWS20Net(nn.Module):
             num_classes=8, # nr of classes + unknown
             num_channels=128,
             dimensions=(128, 1),  # pylint: disable=unused-argument
-            fc_inputs=7,
+            fc_inputs=8,
             bias=False,
             **kwargs
     ):
@@ -38,10 +38,10 @@ class AI85KWS20Net(nn.Module):
         self.voice_conv2 = ai8x.FusedConv1dReLU(100, 100, 1, stride=1, padding=0,
                                                 bias=bias, **kwargs)
 
-        self.voice_conv3 = ai8x.FusedConv1dReLU(100, 50, 1, stride=1, padding=0,
+        self.voice_conv3 = ai8x.FusedConv1dReLU(100, 48, 1, stride=1, padding=0,
                                                 bias=bias, **kwargs)
 
-        self.voice_conv4 = ai8x.FusedConv1dReLU(50, 16, 1, stride=1, padding=0,
+        self.voice_conv4 = ai8x.FusedConv1dReLU(48, 16, 1, stride=1, padding=0,
                                                 bias=bias, **kwargs)
 
         self.kws_conv1 = ai8x.FusedConv2dReLU(16, 32, 3, stride=1, padding=1,
@@ -53,13 +53,13 @@ class AI85KWS20Net(nn.Module):
         self.kws_conv3 = ai8x.FusedConv2dReLU(64, 64, 3, stride=1, padding=1,
                                               bias=bias, **kwargs)
 
-        self.kws_conv4 = ai8x.FusedConv2dReLU(64, 30, 3, stride=1, padding=1,
+        self.kws_conv4 = ai8x.FusedConv2dReLU(64, 32, 3, stride=1, padding=1,
                                               bias=bias, **kwargs)
 
-        self.kws_conv5 = ai8x.FusedConv2dReLU(30, fc_inputs, 3, stride=1, padding=1,
+        self.kws_conv5 = ai8x.FusedConv2dReLU(32, fc_inputs, 3, stride=1, padding=1,
                                               bias=bias, **kwargs)
 
-        self.fc = ai8x.Linear(fc_inputs * 128, num_classes, bias=bias, wide=True, **kwargs)
+        self.fc1 = ai8x.Linear(fc_inputs * 128, num_classes, bias=bias, wide=True, **kwargs)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -79,7 +79,7 @@ class AI85KWS20Net(nn.Module):
         x = self.kws_conv4(x)
         x = self.kws_conv5(x)
         x = x.view(x.size(0), -1)
-        x = self.fc(x)
+        x = self.fc1(x)
 
         return x
 
