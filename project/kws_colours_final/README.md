@@ -1,7 +1,5 @@
 # Keyword Spotting Demo
 
-No idea why the log file is empty :( (maybe some WSL issue or something)
-
 The model used was `ai85net-kws20` and the dataloader was `KWS_Project` (found inside `kws20`). The dataloader used some own keywords and as such had to balanced accordingly (see `weights` in the `KWS_Project`).
 
 The parameters used were:
