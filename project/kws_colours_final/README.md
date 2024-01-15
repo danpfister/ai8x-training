@@ -6,7 +6,7 @@ The parameters used were:
 - Optimizer: Adam
 - Batch size: 512
 - Epochs: 90
-- Initial learning rate: 0.001 (then following the schedule in `/configs/schedule_kws20-90ep.yaml`)
+- Initial learning rate: 0.001 (then following the schedule in `/policies/schedule_kws20-90ep.yaml`)
 - QAT: default
 
 The synthesized network along with the demo can be found in [the ai8x-synthesis repository](https://github.com/danpfister/ai8x-synthesis/tree/ml-on-mcu-project/kws_project).
